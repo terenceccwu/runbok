@@ -17,6 +17,7 @@
     "node-fetch": "^2.7.0",
     "open": "^8.4.2",
     "path": "^0.12.7",
+    "typescript": "^5.9.2",
     "vm2": "^3.9.19"
   },
   "keywords": [

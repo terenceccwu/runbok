@@ -1,26 +1,35 @@
 config:
   code_executor:
     endpoint: ws://127.0.0.1:9229
+    preprocessor: typescript-compiler
   value_format: yaml
 fields:
   - name: a
   - name: b
   - name: c
-    code: ({a, b}) => a * b
+    imports: |-
+      type Input = {
+        a: number;
+        b: number;
+      };
+    code: '({a, b}: Input) => a * b'
   - name: d
     code: ({ c }) => Math.floor(Math.random() * 100) * c
   - name: e
     code: >-
       async ({ d }) => fetch(`https://httpbin.org/anything?num=${d}`).then(r =>
       r.json())
+  - name: f
+    imports: import os from "os";
+    code: () => os.platform()
 values:
   - a: 1
-    b: 3
-    c: 3
-    d: 75
+    b: 4
+    c: 4
+    d: 212
     e:
       args:
-        num: '75'
+        num: '212'
       data: ''
       files: {}
       form: {}
@@ -31,28 +40,32 @@ values:
         Host: httpbin.org
         Sec-Fetch-Mode: cors
         User-Agent: node
-        X-Amzn-Trace-Id: Root=1-688ba314-15e05ed20b0b338e3842a802
+        X-Amzn-Trace-Id: Root=1-688fa5b4-05e56fcc0210bedc07c9410f
       json: null
       method: GET
-      origin: 23.97.62.131
-      url: https://httpbin.org/anything?num=75
+      origin: 23.97.62.135
+      url: https://httpbin.org/anything?num=212
+    f: linux
   - a: 4
     b: 3
     c: 12
-    d: 516
+    d: 756
     e:
       args:
-        num: '516'
+        num: '756'
       data: ''
       files: {}
       form: {}
       headers:
         Accept: '*/*'
-        Accept-Encoding: gzip,deflate
+        Accept-Encoding: br, gzip, deflate
+        Accept-Language: '*'
         Host: httpbin.org
-        User-Agent: node-fetch/1.0 (+https://github.com/bitinn/node-fetch)
-        X-Amzn-Trace-Id: Root=1-68864ee6-2e655ce140414142660fc5f1
+        Sec-Fetch-Mode: cors
+        User-Agent: node
+        X-Amzn-Trace-Id: Root=1-688fa5b4-35b68e936c82a9514b40076d
       json: null
       method: GET
-      origin: 23.97.62.146
-      url: https://httpbin.org/anything?num=516
+      origin: 23.97.62.135
+      url: https://httpbin.org/anything?num=756
+    f: linux

@@ -82,7 +82,7 @@
         const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
         const getFunctionDependencies = (func) => {
-            const match = func.match(/\(\{([^)]+)\}\)/);
+            const match = func.match(/\(\{([^)\}]+)\}.*\)/);
             if (match) {
                 return match[1].split(",").map((arg) => arg.trim());
             }
@@ -91,12 +91,14 @@
 
         function ConfigModal({ isOpen, onClose, config, onSave }) {
             const [endpoint, setEndpoint] = useState('');
+            const [preprocessor, setPreprocessor] = useState('');
             const [valueFormat, setValueFormat] = useState('');
 
             useEffect(() => {
                 if (isOpen) {
-                    setEndpoint(config.code_executor?.endpoint);
-                    setValueFormat(config.value_format);
+                    setEndpoint(config.code_executor?.endpoint || '');
+                    setPreprocessor(config.code_executor?.preprocessor || '');
+                    setValueFormat(config.value_format || 'json');
                 }
             }, [isOpen, config]);
 
@@ -104,7 +106,8 @@
                 const newConfig = {
                     ...config,
                     code_executor: {
-                        endpoint: endpoint.trim()
+                        endpoint: endpoint.trim(),
+                        preprocessor: preprocessor
                     },
                     value_format: valueFormat || 'json',
                 };
@@ -138,13 +141,27 @@
                             </small>
                         </div>
                         <div className="form-group">
+                            <label htmlFor="preprocessor">Code Preprocessor:</label>
+                            <select
+                                id="preprocessor"
+                                value={preprocessor}
+                                onChange={(e) => setPreprocessor(e.target.value)}
+                            >
+                                <option value="">None</option>
+                                <option value="typescript-compiler">TypeScript Compiler</option>
+                            </select>
+                            <small style={{ color: '#666', marginTop: '5px', display: 'block' }}>
+                                TypeScript compiler will use tsconfig.json from the working directory if available
+                            </small>
+                        </div>
+                        <div className="form-group">
                             <label htmlFor="value_format">Value Format:</label>
                             <select
                                 id="value_format"
                                 value={valueFormat}
                                 onChange={(e) => setValueFormat(e.target.value)}
                             >
-                                <option value="json" default>JSON</option>
+                                <option value="json">JSON</option>
                                 <option value="yaml">YAML</option>
                             </select>
                         </div>
@@ -220,10 +237,16 @@
         };
 
         function App() {
+            const NO_OF_HEADER_ROWS = 3;
             const hot = useRef(null);
             const [isLoading, setIsLoading] = useState(true);
             const [saveStatus, setSaveStatus] = useState('');
-            const [config, setConfig] = useState({});
+            const [config, setConfig] = useState({
+                code_executor: { 
+                    endpoint: '',
+                    preprocessor: ''
+                }
+            });
             const [showConfigModal, setShowConfigModal] = useState(false);
             const [filePath, setFilePath] = useState('');
             const [fileContent, setFileContent] = useState(null);
@@ -261,13 +284,19 @@
                     const data = await response.json();
 
                     setFilePath(data.file_path);
-                    setConfig(data.content.config || { code_executor: { endpoint: '' } });
+                    setConfig(data.content.config || { 
+                        code_executor: { 
+                            endpoint: '',
+                            preprocessor: ''
+                        }
+                    });
 
                     if (data.content.fields && data.content.fields.length > 0) {
                         const fieldNames = data.content.fields.map(field => field.name);
+                        const imports = data.content.fields.map(field => field.imports || "");
                         const codes = data.content.fields.map(field => field.code || "");
 
-                        const rows = [fieldNames, codes];
+                        const rows = [fieldNames, imports, codes];
 
                         if (data.content.values && Array.isArray(data.content.values)) {
                             data.content.values.forEach(valueObj => {
@@ -282,7 +311,7 @@
                             });
                         }
 
-                        while (rows.length < 4) {
+                        while (rows.length < 5) {
                             rows.push(Array(fieldNames.length).fill(""));
                         }
 
@@ -309,7 +338,11 @@
                         if (fieldName && fieldName.trim()) {
                             fieldNames.push(fieldName.trim());
                             const field = { name: fieldName.trim() };
-                            const code = data[1] && data[1][i];
+                            const imports = data[1] && data[1][i];
+                            const code = data[2] && data[2][i];
+                            if (imports && imports.trim()) {
+                                field.imports = imports.trim();
+                            }
                             if (code && code.trim()) {
                                 field.code = code.trim();
                             }
@@ -318,7 +351,7 @@
                     }
 
                     const values = [];
-                    for (let rowIndex = 2; rowIndex < data.length; rowIndex++) {
+                    for (let rowIndex = NO_OF_HEADER_ROWS; rowIndex < data.length; rowIndex++) {
                         const row = data[rowIndex];
                         const valueObj = {};
                         let hasAnyValue = false;
@@ -373,7 +406,7 @@
                 }
             };
 
-            const executeCode = async (code, context) => {
+            const executeCode = async (code, context, imports) => {
                 try {
                     const response = await fetch('/api/execute_code', {
                         method: 'POST',
@@ -383,7 +416,9 @@
                         body: JSON.stringify({
                             code,
                             context,
-                            endpoint: config?.code_executor?.endpoint
+                            imports,
+                            endpoint: config?.code_executor?.endpoint,
+                            preprocessor: config?.code_executor?.preprocessor
                         }),
                     });
 
@@ -403,7 +438,7 @@
                 if (newConfig.value_format && newConfig.value_format !== oldConfig.value_format) {
                     // Update the value format in the Handsontable instance
                     const data = hot.current?.hotInstance.getData();
-                    for (let i = 2; i < data.length; i++) {
+                    for (let i = NO_OF_HEADER_ROWS; i < data.length; i++) {
                         for (let j = 0; j < data[i].length; j++) {
                             const value = data[i][j];
                             if (value !== null && value !== undefined && value !== "") {
@@ -430,22 +465,16 @@
                     if (!field_name) {
                         return acc;
                     }
-                    const code = data[1][index];
-                    let func;
-                    try {
-                        func = code ? eval(code) : null;
-                    } catch (e) {
-                        console.error(e);
-                        return acc;
-                    }
+                    const imports = data[1][index];
+                    const code = data[2][index];
 
-                    const dependencies = func ? getFunctionDependencies(code) : [];
+                    const dependencies = code ? getFunctionDependencies(code) : [];
                     acc[field_name] = {
                         field_index: index,
                         field_name,
                         affects: [],
                         dependencies,
-                        func,
+                        imports,
                         code,
                     };
                     dependencies.forEach((dep) => {
@@ -462,7 +491,7 @@
                         for (let i = 0; i < field.affects.length; i++) {
                             const affected_field_name = field.affects[i];
                             const affected_field = fields[affected_field_name];
-                            const row = data[value_row_index + 2];
+                            const row = data[value_row_index + NO_OF_HEADER_ROWS];
 
                             const anyEmptyInputField = affected_field.dependencies.some(
                                 (key) =>
@@ -475,7 +504,7 @@
                             );
                             if (anyEmptyInputField || isEmptyRow) {
                                 hot.current?.hotInstance.setDataAtCell(
-                                    value_row_index + 2,
+                                    value_row_index + NO_OF_HEADER_ROWS,
                                     affected_field.field_index,
                                     null
                                 );
@@ -491,33 +520,33 @@
                             );
 
                             try {
-                                hot.current?.hotInstance.setCellMeta(value_row_index + 2, affected_field.field_index, 'readOnly', true);
+                                hot.current?.hotInstance.setCellMeta(value_row_index + NO_OF_HEADER_ROWS, affected_field.field_index, 'readOnly', true);
                                 setCellStartExecutionTimestamp((prev) => ({
                                     ...prev,
-                                    [`${value_row_index + 2},${affected_field.field_index}`]: Date.now()
+                                    [`${value_row_index + NO_OF_HEADER_ROWS},${affected_field.field_index}`]: Date.now()
                                 }));
-                                const newValue = await executeCode(affected_field.code, rowObject);
+                                const newValue = await executeCode(affected_field.code, rowObject, affected_field.imports);
                                 hot.current?.hotInstance.setDataAtCell(
-                                    value_row_index + 2,
+                                    value_row_index + NO_OF_HEADER_ROWS,
                                     affected_field.field_index,
                                     stringifyValue(newValue)
                                 );
                             } catch (error) {
                                 console.error('Error executing code:', error);
                                 hot.current?.hotInstance.setDataAtCell(
-                                    value_row_index + 2,
+                                    value_row_index + NO_OF_HEADER_ROWS,
                                     affected_field.field_index,
                                     `Error: ${error.message}`
                                 );
                             } finally {
-                                hot.current?.hotInstance.setCellMeta(value_row_index + 2, affected_field.field_index, 'readOnly', false);
+                                hot.current?.hotInstance.setCellMeta(value_row_index + NO_OF_HEADER_ROWS, affected_field.field_index, 'readOnly', false);
                                 setCellStartExecutionTimestamp((prev) => ({
                                     ...prev,
-                                    [`${value_row_index + 2},${affected_field.field_index}`]: null
+                                    [`${value_row_index + NO_OF_HEADER_ROWS},${affected_field.field_index}`]: null
                                 }));
                                 setCellExecutionTimestamps((prev) => ({
                                     ...prev,
-                                    [`${value_row_index + 2},${affected_field.field_index}`]: new Date().toLocaleString()
+                                    [`${value_row_index + NO_OF_HEADER_ROWS},${affected_field.field_index}`]: new Date().toLocaleString()
                                 }));
                             }
                         }
@@ -531,7 +560,7 @@
                         return;
                     }
 
-                    for (let i = 2; i < data.length; i++) {
+                    for (let i = NO_OF_HEADER_ROWS; i < data.length; i++) {
                         const row = data[i];
 
                         const anyEmptyInputField = field.dependencies.some(
@@ -562,7 +591,7 @@
                                 ...prev,
                                 [`${i},${field.field_index}`]: Date.now()
                             }));
-                            const newValue = await executeCode(field.code, rowObject);
+                            const newValue = await executeCode(field.code, rowObject, field.imports);
                             hot.current?.hotInstance.setDataAtCell(
                                 i,
                                 field.field_index,
@@ -589,11 +618,11 @@
                     }
                 };
 
-                if (rowIndex >= 2) {
-                    await onDependencyChange(data[0][colIndex], rowIndex - 2);
+                if (rowIndex >= NO_OF_HEADER_ROWS) {
+                    await onDependencyChange(data[0][colIndex], rowIndex - NO_OF_HEADER_ROWS);
                 }
 
-                if (rowIndex == 1) {
+                if (rowIndex == 1 || rowIndex == 2) {
                     await onFuncChange(data[0][colIndex]);
                 }
 
@@ -636,7 +665,7 @@
                         ref={hot}
                         data={data}
                         rowHeaders={(index) =>
-                            index === 0 ? "Field" : index === 1 ? "Code" : index - 1
+                            index === 0 ? "Field" : index === 1 ? "Imports" : index === 2 ? "Code" : index - 2
                         }
                         rowHeaderWidth={60}
                         colHeaders={true}

@@ -6,6 +6,7 @@ const open = require('open');
 const { VM } = require('vm2');
 const fetch = require('node-fetch');
 const NodeInspectorConnectionPool = require('./utils/node-inspector-connection-pool');
+const compileTypeScript = require('./utils/tsc');
 
 const app = express();
 const PORT = 3001;
@@ -37,7 +38,8 @@ app.get('/api/file_content', (req, res) => {
             const emptyContent = {
                 config: {
                     code_executor: {
-                        endpoint: ""
+                        endpoint: "",
+                        preprocessor: ""
                     }
                 },
                 fields: [],
@@ -53,9 +55,15 @@ app.get('/api/file_content', (req, res) => {
         if (!parsedContent.config) {
             parsedContent.config = {
                 code_executor: {
-                    endpoint: ""
+                    endpoint: "",
+                    preprocessor: ""
                 }
             };
+        }
+
+        // Ensure preprocessor field exists
+        if (!parsedContent.config.code_executor.preprocessor) {
+            parsedContent.config.code_executor.preprocessor = "";
         }
 
         res.json({
@@ -101,18 +109,42 @@ app.post('/api/file_content', (req, res) => {
 // POST /api/execute_code - Execute code safely (local execution)
 app.post('/api/execute_code', async (req, res) => {
     try {
-        const { code, context = {}, endpoint } = req.body;
+        let { imports = "", code = "", context = {}, endpoint, preprocessor } = req.body;
 
         if (!code) {
             return res.status(400).json({ error: 'Code is required' });
         }
 
+        const codeTemplate = `
+            ${imports}
+            const func = ${code};
+            return await func(${context ? JSON.stringify(context) : '{}'});
+        `;
+
+        let processedCode = codeTemplate || "";
+
+        // Apply TypeScript preprocessing if configured
+        if (preprocessor === 'typescript-compiler') {
+            try {
+                processedCode = compileTypeScript(codeTemplate, filePathAbs);
+                console.log('TypeScript code compiled successfully');
+            } catch (compileError) {
+                console.error('TypeScript compilation error:', compileError);
+                return res.status(400).json({
+                    success: false,
+                    error: 'TypeScript compilation failed',
+                    details: compileError.message
+                });
+            }
+        }
+
+
         const wrappedCode = `
             (async function() {
-                const func = ${code};
-                return await func(${context ? JSON.stringify(context) : '{}'});
-            })()
-        `;
+                var exports = {};
+                ${processedCode}
+            })();
+        `
 
         if (endpoint && endpoint.trim()) {
             console.log(`Executing code on remote endpoint: ${endpoint}`);
@@ -122,7 +154,6 @@ app.post('/api/execute_code', async (req, res) => {
         }
 
         // Default local execution using VM2
-        console.log('Executing code locally');
         const vm = new VM();
         vm.freeze(fetch, 'fetch');
 
