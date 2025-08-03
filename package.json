@@ -1,0 +1,29 @@
+{
+  "name": "runbok",
+  "version": "1.0.0",
+  "description": "A runbook for your workflow",
+  "main": "index.js",
+  "bin": {
+    "runbok": "./bin/runbok.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "chrome-remote-interface": "^0.33.3",
+    "express": "^4.18.2",
+    "fs": "^0.0.1-security",
+    "js-yaml": "^4.1.0",
+    "node-fetch": "^2.7.0",
+    "open": "^8.4.2",
+    "path": "^0.12.7",
+    "vm2": "^3.9.19"
+  },
+  "keywords": [
+    "runbok",
+    "spreadsheet",
+    "cli"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+}

@@ -1,0 +1,58 @@
+config:
+  code_executor:
+    endpoint: ws://127.0.0.1:9229
+  value_format: yaml
+fields:
+  - name: a
+  - name: b
+  - name: c
+    code: ({a, b}) => a * b
+  - name: d
+    code: ({ c }) => Math.floor(Math.random() * 100) * c
+  - name: e
+    code: >-
+      async ({ d }) => fetch(`https://httpbin.org/anything?num=${d}`).then(r =>
+      r.json())
+values:
+  - a: 1
+    b: 3
+    c: 3
+    d: 75
+    e:
+      args:
+        num: '75'
+      data: ''
+      files: {}
+      form: {}
+      headers:
+        Accept: '*/*'
+        Accept-Encoding: br, gzip, deflate
+        Accept-Language: '*'
+        Host: httpbin.org
+        Sec-Fetch-Mode: cors
+        User-Agent: node
+        X-Amzn-Trace-Id: Root=1-688ba314-15e05ed20b0b338e3842a802
+      json: null
+      method: GET
+      origin: 23.97.62.131
+      url: https://httpbin.org/anything?num=75
+  - a: 4
+    b: 3
+    c: 12
+    d: 516
+    e:
+      args:
+        num: '516'
+      data: ''
+      files: {}
+      form: {}
+      headers:
+        Accept: '*/*'
+        Accept-Encoding: gzip,deflate
+        Host: httpbin.org
+        User-Agent: node-fetch/1.0 (+https://github.com/bitinn/node-fetch)
+        X-Amzn-Trace-Id: Root=1-68864ee6-2e655ce140414142660fc5f1
+      json: null
+      method: GET
+      origin: 23.97.62.146
+      url: https://httpbin.org/anything?num=516

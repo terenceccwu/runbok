@@ -1,0 +1,23 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug TS-Node",
+            "type": "node",
+            "request": "launch",
+            "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/ts-node", // or "ts-node" if globally installed
+            "runtimeArgs": [
+                "--transpile-only", // Optional: for faster startup, skips type checking
+            ],
+            "args": [
+                "${file}"
+            ], // Debug the currently open file
+            "cwd": "${workspaceFolder}/",
+            "internalConsoleOptions": "openOnSessionStart",
+            "skipFiles": [
+                "<node_internals>/**",
+                "node_modules/**"
+            ]
+        }
+    ]
+}

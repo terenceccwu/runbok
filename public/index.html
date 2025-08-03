@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>runbok</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/handsontable/dist/handsontable.full.min.js"></script>
+    <script src="https://unpkg.com/@handsontable/react-wrapper@16.0.1/dist/react-handsontable.min.js"></script>
+    <script src="https://unpkg.com/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/handsontable/dist/handsontable.full.min.css">
+    <style>
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal-content {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            min-width: 400px;
+            max-width: 90vw;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .button-group {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .btn-primary {
+            background-color: #007bff;
+            color: white;
+        }
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+        }
+        .btn-success {
+            background-color: #28a745;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
+        const { HotTable } = Handsontable.react;
+
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+        const getFunctionDependencies = (func) => {
+            const match = func.match(/\(\{([^)]+)\}\)/);
+            if (match) {
+                return match[1].split(",").map((arg) => arg.trim());
+            }
+            return [];
+        };
+
+        function ConfigModal({ isOpen, onClose, config, onSave }) {
+            const [endpoint, setEndpoint] = useState('');
+            const [valueFormat, setValueFormat] = useState('');
+
+            useEffect(() => {
+                if (isOpen) {
+                    setEndpoint(config.code_executor?.endpoint);
+                    setValueFormat(config.value_format);
+                }
+            }, [isOpen, config]);
+
+            const handleSave = () => {
+                const newConfig = {
+                    ...config,
+                    code_executor: {
+                        endpoint: endpoint.trim()
+                    },
+                    value_format: valueFormat || 'json',
+                };
+                onSave(newConfig, config);
+                onClose();
+            };
+
+            if (!isOpen) return null;
+
+            return (
+                <div className="modal-overlay" onClick={onClose}>
+                    <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                        <h3>Configuration</h3>
+                        <div className="form-group">
+                            <label htmlFor="endpoint">Node.JS Debugger / Chrome DevTools Protocol Endpoint:</label>
+                            <input
+                                id="endpoint"
+                                type="text"
+                                value={endpoint}
+                                onChange={(e) => setEndpoint(e.target.value)}
+                                placeholder="e.g. ws://127.0.0.1:9229"
+                            />
+                            <small style={{ color: '#666', marginTop: '5px', display: 'block' }}>
+                                Start a Node.JS Debugger using:
+                                <pre>
+                                    node --inspect<br/>
+                                    or<br/>
+                                    node --inspect ./some-repl-console.js
+                                </pre>
+                                Leave empty to use local code execution
+                            </small>
+                        </div>
+                        <div className="form-group">
+                            <label htmlFor="value_format">Value Format:</label>
+                            <select
+                                id="value_format"
+                                value={valueFormat}
+                                onChange={(e) => setValueFormat(e.target.value)}
+                            >
+                                <option value="json" default>JSON</option>
+                                <option value="yaml">YAML</option>
+                            </select>
+                        </div>
+                        <div className="button-group">
+                            <button className="btn btn-secondary" onClick={onClose}>
+                                Cancel
+                            </button>
+                            <button className="btn btn-primary" onClick={handleSave}>
+                                Save
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const CustomCell = (props) => {
+            // the available renderer-related props are:
+            // - `row` (row index)
+            // - `col` (column index)
+            // - `prop` (column property name)
+            // - `TD` (the HTML cell element)
+            // - `cellProperties` (the `cellProperties` object for the edited cell)
+
+            // cellStartExecutionTimestamp is now a timestamp (number) or null
+            const [now, setNow] = React.useState(Date.now());
+
+            // If loading, update every 100ms to show elapsed time
+            useEffect(() => {
+                if (props.cellStartExecutionTimestamp) {
+                    const interval = setInterval(() => setNow(Date.now()), 100);
+                    return () => clearInterval(interval);
+                }
+            }, [props.cellStartExecutionTimestamp]);
+
+            let durationText = '';
+            if (props.cellStartExecutionTimestamp) {
+                props.TD.style['backgroundColor'] = '#777';
+                const elapsed = Math.max(0, now - props.cellStartExecutionTimestamp);
+                durationText = ` (${(elapsed / 1000).toFixed(2)}s)`;
+            } else {
+                props.TD.style['backgroundColor'] = '#fff';
+            }
+
+            // Tooltip content
+            const tooltip = props.lastExecution
+                ? `Last executed: ${props.lastExecution}`
+                : 'No execution yet';
+
+            return (
+                <div
+                    style={{ position: 'relative', width: '100%', height: '100%' }}
+                    title={tooltip}
+                >
+                    {props.value}
+                    {props.cellStartExecutionTimestamp && (
+                        <div style={{
+                            position: 'absolute',
+                            top: 0, left: 0, right: 0, bottom: 0,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            zIndex: 2,
+                            fontSize: '0.9em',
+                            color: '#fff',
+                            pointerEvents: 'none'
+                        }}>
+                            <span>Executing...{durationText}</span>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        function App() {
+            const hot = useRef(null);
+            const [isLoading, setIsLoading] = useState(true);
+            const [saveStatus, setSaveStatus] = useState('');
+            const [config, setConfig] = useState({});
+            const [showConfigModal, setShowConfigModal] = useState(false);
+            const [filePath, setFilePath] = useState('');
+            const [fileContent, setFileContent] = useState(null);
+
+            const [data, setData] = useState([]);
+            // Change cellStartExecutionTimestamp from boolean to timestamp (number | null)
+            const [cellStartExecutionTimestamp, setCellStartExecutionTimestamp] = useState({});
+            const [cellExecutionTimestamps, setCellExecutionTimestamps] = useState({}); // track last execution timestamps
+            const [dirty, setDirty] = useState(false); // track unsaved changes
+
+            const stringifyValue = useCallback((value, forceFormat = null) => {
+                const format = forceFormat || config.value_format || 'json';
+                if (format === 'yaml') {
+                    return jsyaml.dump(value).trim();
+                }
+                return JSON.stringify(value, null, "  ");
+            }, [config]);
+
+            const parseValue = useCallback((value, forceFormat = null) => {
+                const format = forceFormat || config.value_format || 'json';
+                if (format === 'yaml') {
+                    return jsyaml.load(value);
+                }
+                try {
+                    return JSON.parse(value);
+                } catch {
+                    return value; // Return as is if parsing fails
+                }
+            }, [config]);
+
+            const loadFileContent = useCallback(async () => {
+                setIsLoading(true);
+                try {
+                    const response = await fetch('/api/file_content');
+                    const data = await response.json();
+
+                    setFilePath(data.file_path);
+                    setConfig(data.content.config || { code_executor: { endpoint: '' } });
+
+                    if (data.content.fields && data.content.fields.length > 0) {
+                        const fieldNames = data.content.fields.map(field => field.name);
+                        const codes = data.content.fields.map(field => field.code || "");
+
+                        const rows = [fieldNames, codes];
+
+                        if (data.content.values && Array.isArray(data.content.values)) {
+                            data.content.values.forEach(valueObj => {
+                                const row = fieldNames.map(fieldName => {
+                                    const value = valueObj[fieldName];
+                                    if (value !== undefined && value !== null) {
+                                        return typeof value === 'object' ? stringifyValue(value, data.content.config.value_format) : value;
+                                    }
+                                    return "";
+                                });
+                                rows.push(row);
+                            });
+                        }
+
+                        while (rows.length < 4) {
+                            rows.push(Array(fieldNames.length).fill(""));
+                        }
+
+                        setData(rows);
+                        setDirty(false); // reset dirty flag after loading
+                    }
+                } catch (error) {
+                    console.error('Error loading file:', error);
+                } finally {
+                    setIsLoading(false);
+                }
+            }, [setConfig, setData, stringifyValue]);
+
+            const saveFileContent = async () => {
+                try {
+                    const data = hot.current?.hotInstance.getData();
+                    if (!data) return;
+
+                    const fields = [];
+                    const fieldNames = [];
+
+                    for (let i = 0; i < data[0].length; i++) {
+                        const fieldName = data[0][i];
+                        if (fieldName && fieldName.trim()) {
+                            fieldNames.push(fieldName.trim());
+                            const field = { name: fieldName.trim() };
+                            const code = data[1] && data[1][i];
+                            if (code && code.trim()) {
+                                field.code = code.trim();
+                            }
+                            fields.push(field);
+                        }
+                    }
+
+                    const values = [];
+                    for (let rowIndex = 2; rowIndex < data.length; rowIndex++) {
+                        const row = data[rowIndex];
+                        const valueObj = {};
+                        let hasAnyValue = false;
+
+                        for (let colIndex = 0; colIndex < fieldNames.length; colIndex++) {
+                            const fieldName = fieldNames[colIndex];
+                            const cellValue = row[colIndex];
+
+                            if (cellValue !== null && cellValue !== undefined && cellValue !== "") {
+                                try {
+                                    valueObj[fieldName] = parseValue(cellValue);
+                                } catch {
+                                    valueObj[fieldName] = cellValue;
+                                }
+                                hasAnyValue = true;
+                            }
+                        }
+
+                        if (hasAnyValue) {
+                            values.push(valueObj);
+                        }
+                    }
+
+                    const yamlData = {
+                        config: config,
+                        fields
+                    };
+                    if (values.length > 0) {
+                        yamlData.values = values;
+                    }
+
+                    const response = await fetch('/api/file_content', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            content: yamlData,
+                        }),
+                    });
+
+                    if (response.ok) {
+                        setSaveStatus('Save Success');
+                        setDirty(false);
+                        setTimeout(() => setSaveStatus(''), 1500);
+                    } else {
+                        setSaveStatus('Save failed');
+                    }
+                } catch (error) {
+                    console.error('Error saving file:', error);
+                    setSaveStatus('Save failed');
+                }
+            };
+
+            const executeCode = async (code, context) => {
+                try {
+                    const response = await fetch('/api/execute_code', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            code,
+                            context,
+                            endpoint: config?.code_executor?.endpoint
+                        }),
+                    });
+
+                    const result = await response.json();
+                    if (result.success) {
+                        return result.result;
+                    } else {
+                        throw new Error(result.details || 'Code execution failed');
+                    }
+                } catch (error) {
+                    console.error('Error executing code:', error);
+                    throw error;
+                }
+            };
+
+            const onConfigSave = useCallback((newConfig, oldConfig) => {
+                if (newConfig.value_format && newConfig.value_format !== oldConfig.value_format) {
+                    // Update the value format in the Handsontable instance
+                    const data = hot.current?.hotInstance.getData();
+                    for (let i = 2; i < data.length; i++) {
+                        for (let j = 0; j < data[i].length; j++) {
+                            const value = data[i][j];
+                            if (value !== null && value !== undefined && value !== "") {
+                                try {
+                                    data[i][j] = stringifyValue(parseValue(value, oldConfig.value_format), newConfig.value_format);
+                                } catch (e) {
+                                    console.error('Error parsing value:', e);
+                                }
+                            }
+                        }
+                    }
+                    setData(data);
+                }
+
+                setConfig(newConfig);
+                setDirty(true);
+
+            }, [stringifyValue, parseValue]);
+
+            const onchange = useCallback(async function (rowIndex, colIndex, oldValue, newValue) {
+                const data = hot.current?.hotInstance.getData();
+
+                const fields = data[0].reduce((acc, field_name, index) => {
+                    if (!field_name) {
+                        return acc;
+                    }
+                    const code = data[1][index];
+                    let func;
+                    try {
+                        func = code ? eval(code) : null;
+                    } catch (e) {
+                        console.error(e);
+                        return acc;
+                    }
+
+                    const dependencies = func ? getFunctionDependencies(code) : [];
+                    acc[field_name] = {
+                        field_index: index,
+                        field_name,
+                        affects: [],
+                        dependencies,
+                        func,
+                        code,
+                    };
+                    dependencies.forEach((dep) => {
+                        if (acc[dep]) {
+                            acc[dep].affects.push(field_name);
+                        }
+                    });
+                    return acc;
+                }, {});
+
+                const onDependencyChange = async (field_name, value_row_index) => {
+                    const field = fields[field_name];
+                    if (field?.affects) {
+                        for (let i = 0; i < field.affects.length; i++) {
+                            const affected_field_name = field.affects[i];
+                            const affected_field = fields[affected_field_name];
+                            const row = data[value_row_index + 2];
+
+                            const anyEmptyInputField = affected_field.dependencies.some(
+                                (key) =>
+                                    row[fields[key].field_index] === "" ||
+                                    row[fields[key].field_index] === null
+                            );
+                            const isEmptyRow = row.every(
+                                (cell, i) =>
+                                    i >= affected_field.field_index || cell === "" || cell === null
+                            );
+                            if (anyEmptyInputField || isEmptyRow) {
+                                hot.current?.hotInstance.setDataAtCell(
+                                    value_row_index + 2,
+                                    affected_field.field_index,
+                                    null
+                                );
+                                continue;
+                            }
+
+                            const rowObject = Object.fromEntries(
+                                Object.keys(fields)
+                                    .filter(
+                                        (key) => fields[key].field_index < affected_field.field_index
+                                    )
+                                    .map((key) => [key, parseValue(row[fields[key].field_index])])
+                            );
+
+                            try {
+                                hot.current?.hotInstance.setCellMeta(value_row_index + 2, affected_field.field_index, 'readOnly', true);
+                                setCellStartExecutionTimestamp((prev) => ({
+                                    ...prev,
+                                    [`${value_row_index + 2},${affected_field.field_index}`]: Date.now()
+                                }));
+                                const newValue = await executeCode(affected_field.code, rowObject);
+                                hot.current?.hotInstance.setDataAtCell(
+                                    value_row_index + 2,
+                                    affected_field.field_index,
+                                    stringifyValue(newValue)
+                                );
+                            } catch (error) {
+                                console.error('Error executing code:', error);
+                                hot.current?.hotInstance.setDataAtCell(
+                                    value_row_index + 2,
+                                    affected_field.field_index,
+                                    `Error: ${error.message}`
+                                );
+                            } finally {
+                                hot.current?.hotInstance.setCellMeta(value_row_index + 2, affected_field.field_index, 'readOnly', false);
+                                setCellStartExecutionTimestamp((prev) => ({
+                                    ...prev,
+                                    [`${value_row_index + 2},${affected_field.field_index}`]: null
+                                }));
+                                setCellExecutionTimestamps((prev) => ({
+                                    ...prev,
+                                    [`${value_row_index + 2},${affected_field.field_index}`]: new Date().toLocaleString()
+                                }));
+                            }
+                        }
+                    }
+                };
+
+                const onFuncChange = async (field_name) => {
+                    const field = fields[field_name];
+
+                    if (!field || !field.code) {
+                        return;
+                    }
+
+                    for (let i = 2; i < data.length; i++) {
+                        const row = data[i];
+
+                        const anyEmptyInputField = field.dependencies.some(
+                            (key) =>
+                                row[fields[key].field_index] === "" ||
+                                row[fields[key].field_index] === null
+                        );
+                        const isEmptyRow = row.every(
+                            (cell, j) => j >= field.field_index || cell === "" || cell === null
+                        );
+                        if (anyEmptyInputField || isEmptyRow) {
+                            hot.current?.hotInstance.setDataAtCell(i, field.field_index, null);
+                            continue;
+                        }
+
+                        const rowObject = Object.fromEntries(
+                            Object.keys(fields)
+                                .filter(
+                                    (key) => fields[key].field_index < field.field_index
+                                )
+                                .map((key) => [key, parseValue(row[fields[key].field_index])])
+                        );
+
+                        try {
+                            console.log('Executing code for field:', field_name, 'with rowObject:', rowObject);
+                            hot.current?.hotInstance.setCellMeta(i, field.field_index, 'readOnly', true);
+                            setCellStartExecutionTimestamp((prev) => ({
+                                ...prev,
+                                [`${i},${field.field_index}`]: Date.now()
+                            }));
+                            const newValue = await executeCode(field.code, rowObject);
+                            hot.current?.hotInstance.setDataAtCell(
+                                i,
+                                field.field_index,
+                                stringifyValue(newValue)
+                            );
+                        } catch (error) {
+                            console.error('Error executing code:', error);
+                            hot.current?.hotInstance.setDataAtCell(
+                                i,
+                                field.field_index,
+                                `Error: ${error.message}`
+                            );
+                        } finally {
+                            hot.current?.hotInstance.setCellMeta(i, field.field_index, 'readOnly', false);
+                            setCellStartExecutionTimestamp((prev) => ({
+                                ...prev,
+                                [`${i},${field.field_index}`]: null
+                            }));
+                            setCellExecutionTimestamps((prev) => ({
+                                ...prev,
+                                [`${i},${field.field_index}`]: new Date().toLocaleString()
+                            }));
+                        }
+                    }
+                };
+
+                if (rowIndex >= 2) {
+                    await onDependencyChange(data[0][colIndex], rowIndex - 2);
+                }
+
+                if (rowIndex == 1) {
+                    await onFuncChange(data[0][colIndex]);
+                }
+
+                // // Auto-save after changes
+                // await saveFileContent();
+            }, [hot, config, parseValue, stringifyValue, executeCode]);
+
+            // if (isLoading) {
+            //     return <div style={{ padding: '20px' }}>Loading...</div>;
+            // }
+
+            return (
+                <div>
+                    <div style={{ padding: '10px', marginBottom: '10px', background: '#f5f5f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <h2 style={{ margin: 0 }}>runbok: {filePath}</h2>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <button
+                                onClick={() => setShowConfigModal(true)}
+                                className="btn btn-secondary"
+                            >
+                                Config
+                            </button>
+                            <button
+                                onClick={saveFileContent}
+                                className="btn btn-success"
+                            >
+                                Save{dirty ? ' *' : ''}
+                            </button>
+                            {saveStatus && <span style={{ color: saveStatus.includes('failed') ? 'red' : 'green' }}>{saveStatus}</span>}
+                        </div>
+                    </div>
+
+                    {config?.code_executor?.endpoint && (
+                        <div style={{ padding: '10px', background: '#e7f3ff', marginBottom: '10px', borderLeft: '4px solid #007bff' }}>
+                            <strong>Code Executor:</strong> {config.code_executor.endpoint}
+                        </div>
+                    )}
+
+                    <HotTable
+                        ref={hot}
+                        data={data}
+                        rowHeaders={(index) =>
+                            index === 0 ? "Field" : index === 1 ? "Code" : index - 1
+                        }
+                        rowHeaderWidth={60}
+                        colHeaders={true}
+                        minSpareCols={10}
+                        minSpareRows={10}
+                        height="auto"
+                        colWidths={150}
+                        manualColumnResize={true}
+                        autoWrapRow={true}
+                        autoWrapCol={true}
+                        licenseKey="non-commercial-and-evaluation"
+                        afterInit={() => {
+                            loadFileContent()
+                        }}
+                        afterChange={(changes, source) => {
+                            if (changes && source !== 'loadData') {
+                                setDirty(true); // mark as dirty on any change
+                                changes?.forEach(([row, col, oldValue, newValue]) => {
+                                    onchange(row, col, oldValue, newValue);
+                                });
+                            }
+                        }}
+                        renderer={(props) => (
+                            <CustomCell
+                                {...props}
+                                cellStartExecutionTimestamp={cellStartExecutionTimestamp[`${props.row},${props.col}`]}
+                                lastExecution={cellExecutionTimestamps[`${props.row},${props.col}`]}
+                            />
+                        )}
+                    />
+
+                    <ConfigModal
+                        isOpen={showConfigModal}
+                        onClose={() => setShowConfigModal(false)}
+                        config={config}
+                        onSave={onConfigSave}
+                    />
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
