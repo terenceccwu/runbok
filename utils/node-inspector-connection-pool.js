@@ -28,7 +28,7 @@ class NodeInspectorConnectionPool {
                 const parsed = url.parse(endpoint);
                 const host = parsed.hostname || 'localhost';
                 const port = parseInt(parsed.port) || 9222;
-                const targetId = parsed.pathname ? parsed.pathname.substring(1) : null; // Remove leading '/'
+                const targetId = parsed.pathname ? (parsed.pathname.includes('/devtools/page/') ? parsed.pathname.split('/devtools/page/')[1] : parsed.pathname.substring(1)) : null; // Handle Chrome DevTools Targets and Remove leading '/'
                 
                 return {
                     host,

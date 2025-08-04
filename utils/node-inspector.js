@@ -2,10 +2,11 @@ const CDP = require('chrome-remote-interface');
 const { EventEmitter } = require('events');
 
 class NodeInspectorClient extends EventEmitter {
-    constructor(host = 'localhost', port = 9229) {
+    constructor(host = 'localhost', port = 9229, target) {
         super();
         this.host = host;
         this.port = port;
+        this.target = target;
         this.client = null;
     }
 
@@ -14,7 +15,8 @@ class NodeInspectorClient extends EventEmitter {
             // Connect using chrome-remote-interface
             this.client = await CDP({
                 host: this.host,
-                port: this.port
+                port: this.port,
+                target: this.target,
             });
 
             console.log('Connected to Node.js Inspector');
