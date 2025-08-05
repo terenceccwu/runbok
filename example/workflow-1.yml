@@ -22,6 +22,12 @@ fields:
   - name: f
     imports: import os from "os";
     code: () => os.platform()
+  - name: g
+    imports: import { hello } from "./src/lib1";
+    code: () => hello
+  - name: h
+    imports: import { hello_world } from "./src/lib2";
+    code: () => hello_world
 values:
   - a: 1
     b: 4
@@ -46,6 +52,8 @@ values:
       origin: 23.97.62.135
       url: https://httpbin.org/anything?num=212
     f: linux
+    g: HELLO
+    h: HELLO WORLD
   - a: 4
     b: 3
     c: 12
@@ -69,3 +77,5 @@ values:
       origin: 23.97.62.135
       url: https://httpbin.org/anything?num=756
     f: linux
+    g: HELLO
+    h: HELLO WORLD

@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "console:ts-node": "NODE_OPTIONS='--inspect' ts-node",
+    "console:tsx": "node --inspect --interactive --eval \"const tsx = require('tsx/cjs/api'); const unregister = tsx.register();\""
   },
   "author": "",
   "license": "ISC",
