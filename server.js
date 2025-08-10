@@ -7,6 +7,7 @@ const { VM } = require('vm2');
 const fetch = require('node-fetch');
 const NodeInspectorConnectionPool = require('./utils/node-inspector-connection-pool');
 const compileTypeScript = require('./utils/tsc');
+const exportCode = require('./utils/export-code');
 
 const app = express();
 const PORT = 3001;
@@ -40,6 +41,10 @@ app.get('/api/file_content', (req, res) => {
                     code_executor: {
                         endpoint: "",
                         preprocessor: ""
+                    },
+                    language: "ts",
+                    export: {
+                        file_path: "./src/workflow.ts"
                     }
                 },
                 fields: [],
@@ -57,6 +62,10 @@ app.get('/api/file_content', (req, res) => {
                 code_executor: {
                     endpoint: "",
                     preprocessor: ""
+                },
+                language: "ts",
+                export: {
+                    file_path: "./src/workflow.ts"
                 }
             };
         }
@@ -64,6 +73,14 @@ app.get('/api/file_content', (req, res) => {
         // Ensure preprocessor field exists
         if (!parsedContent.config.code_executor.preprocessor) {
             parsedContent.config.code_executor.preprocessor = "";
+        }
+        if (!parsedContent.config.language) {
+            parsedContent.config.language = "ts";
+        }
+        if (!parsedContent.config.export) {
+            parsedContent.config.export = {
+                file_path: "./src/workflow.ts"
+            };
         }
 
         res.json({
@@ -166,6 +183,32 @@ app.post('/api/execute_code', async (req, res) => {
         res.status(500).json({
             success: false,
             error: 'Code execution failed',
+            details: error.message
+        });
+    }
+});
+
+app.post('/api/export_code', async (req, res) => {
+    try {
+        const { content, config } = req.body;
+        
+        if (!content || !content.fields) {
+            return res.status(400).json({ error: 'Invalid content provided' });
+        }
+        
+        const workingDir = path.dirname(filePathAbs);
+        const exportPath = exportCode(content, config, workingDir);
+        
+        res.json({ 
+            success: true, 
+            message: 'Code exported successfully',
+            export_path: path.relative(workingDir, exportPath)
+        });
+    } catch (error) {
+        console.error('Error exporting code:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Code export failed',
             details: error.message
         });
     }

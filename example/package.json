@@ -3,8 +3,9 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "console:ts-node": "NODE_OPTIONS='--inspect' ts-node",
-    "console:tsx": "node --inspect --interactive --eval \"const tsx = require('tsx/cjs/api'); const unregister = tsx.register();\""
+    "dev": "concurrently 'npm run console:tsx' 'runbok workflow-1.yml'",
+    "console:ts-node": "cd ./src && NODE_OPTIONS='--inspect' ts-node",
+    "console:tsx": "cd ./src && node --inspect --interactive --eval \"const tsx = require('tsx/cjs/api'); const unregister = tsx.register();\""
   },
   "author": "",
   "license": "ISC",
@@ -12,5 +13,8 @@
     "@aws-sdk/client-sts": "^3.858.0",
     "ts-node": "^10.9.2",
     "tsx": "^4.20.3"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.0"
   }
 }

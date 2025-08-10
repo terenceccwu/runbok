@@ -1,0 +1,36 @@
+<% if (imports.length > 0) { -%>
+<% imports.forEach(imp => { -%>
+<%- imp %>
+<% }); -%>
+
+<% } -%>
+<% if (inputFields.length > 0) { -%>
+type Input = {
+<% inputFields.forEach(field => { -%>
+  <%- field.name %>: any;
+<% }); -%>
+};
+
+<% } else { -%>
+type Input = Record<string, any>;
+
+<% } -%>
+type Output = Input & {
+<% computedFields.forEach(field => { -%>
+  <%- field.name %>: any;
+<% }); -%>
+};
+
+<% functions.forEach(func => { -%>
+const <%- func.name %> = <%- func.code %>;
+
+<% }); -%>
+const main = async (input: Input): Promise<Output> => {
+  const ctx = Object.assign({}, input) as Output;
+<% computedFields.forEach(field => { -%>
+  ctx["<%- field.name %>"] = await compute_<%- field.name %>(ctx);<% if (field.dependencies && field.dependencies.length > 0) { %> // depends on: <%- field.dependencies.join(', ') %><% } %>
+<% }); -%>
+  return ctx;
+};
+
+export default main;

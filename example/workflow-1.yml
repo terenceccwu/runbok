@@ -3,16 +3,19 @@ config:
     endpoint: ws://127.0.0.1:9229
     preprocessor: typescript-compiler
   value_format: yaml
+  language: ts
+  export:
+    file_path: ./src/workflow.ts
 fields:
   - name: a
   - name: b
   - name: c
     imports: |-
-      type Input = {
+      type InputC = {
         a: number;
         b: number;
       };
-    code: '({a, b}: Input) => a * b'
+    code: '({a, b}: InputC) => a * b'
   - name: d
     code: ({ c }) => Math.floor(Math.random() * 100) * c
   - name: e
@@ -23,19 +26,19 @@ fields:
     imports: import os from "os";
     code: () => os.platform()
   - name: g
-    imports: import { hello } from "./src/lib1";
+    imports: import { hello } from "./lib1";
     code: () => hello
   - name: h
-    imports: import { hello_world } from "./src/lib2";
+    imports: import { hello_world } from "./lib2";
     code: () => hello_world
 values:
   - a: 1
     b: 4
     c: 4
-    d: 212
+    d: 180
     e:
       args:
-        num: '212'
+        num: '180'
       data: ''
       files: {}
       form: {}
@@ -46,21 +49,21 @@ values:
         Host: httpbin.org
         Sec-Fetch-Mode: cors
         User-Agent: node
-        X-Amzn-Trace-Id: Root=1-688fa5b4-05e56fcc0210bedc07c9410f
+        X-Amzn-Trace-Id: Root=1-6898c13f-7991682374b4c0580404b2e0
       json: null
       method: GET
-      origin: 23.97.62.135
-      url: https://httpbin.org/anything?num=212
+      origin: 23.97.62.146
+      url: https://httpbin.org/anything?num=180
     f: linux
     g: HELLO
     h: HELLO WORLD
   - a: 4
     b: 3
     c: 12
-    d: 756
+    d: 240
     e:
       args:
-        num: '756'
+        num: '240'
       data: ''
       files: {}
       form: {}
@@ -71,11 +74,11 @@ values:
         Host: httpbin.org
         Sec-Fetch-Mode: cors
         User-Agent: node
-        X-Amzn-Trace-Id: Root=1-688fa5b4-35b68e936c82a9514b40076d
+        X-Amzn-Trace-Id: Root=1-6898c00c-02030b7919c8c880035f0ceb
       json: null
       method: GET
-      origin: 23.97.62.135
-      url: https://httpbin.org/anything?num=756
+      origin: 23.97.62.146
+      url: https://httpbin.org/anything?num=240
     f: linux
     g: HELLO
     h: HELLO WORLD

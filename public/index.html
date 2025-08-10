@@ -93,12 +93,16 @@
             const [endpoint, setEndpoint] = useState('');
             const [preprocessor, setPreprocessor] = useState('');
             const [valueFormat, setValueFormat] = useState('');
+            const [language, setLanguage] = useState('');
+            const [exportFilePath, setExportFilePath] = useState('');
 
             useEffect(() => {
                 if (isOpen) {
                     setEndpoint(config.code_executor?.endpoint || '');
                     setPreprocessor(config.code_executor?.preprocessor || '');
                     setValueFormat(config.value_format || 'json');
+                    setLanguage(config.language || 'ts');
+                    setExportFilePath(config.export?.file_path || './src/workflow.ts');
                 }
             }, [isOpen, config]);
 
@@ -110,6 +114,10 @@
                         preprocessor: preprocessor
                     },
                     value_format: valueFormat || 'json',
+                    language: language || 'ts',
+                    export: {
+                        file_path: exportFilePath.trim() || './src/workflow.ts'
+                    }
                 };
                 onSave(newConfig, config);
                 onClose();
@@ -164,6 +172,30 @@
                                 <option value="json">JSON</option>
                                 <option value="yaml">YAML</option>
                             </select>
+                        </div>
+                        <div className="form-group">
+                            <label htmlFor="language">Export Language:</label>
+                            <select
+                                id="language"
+                                value={language}
+                                onChange={(e) => setLanguage(e.target.value)}
+                            >
+                                <option value="ts">TypeScript</option>
+                                <option value="js">JavaScript</option>
+                            </select>
+                        </div>
+                        <div className="form-group">
+                            <label htmlFor="exportFilePath">Export File Path:</label>
+                            <input
+                                id="exportFilePath"
+                                type="text"
+                                value={exportFilePath}
+                                onChange={(e) => setExportFilePath(e.target.value)}
+                                placeholder="./src/workflow.ts"
+                            />
+                            <small style={{ color: '#666', marginTop: '5px', display: 'block' }}>
+                                Relative to the YAML file location
+                            </small>
                         </div>
                         <div className="button-group">
                             <button className="btn btn-secondary" onClick={onClose}>
@@ -241,6 +273,7 @@
             const hot = useRef(null);
             const [isLoading, setIsLoading] = useState(true);
             const [saveStatus, setSaveStatus] = useState('');
+            const [exportStatus, setExportStatus] = useState('');
             const [config, setConfig] = useState({
                 code_executor: { 
                     endpoint: '',
@@ -325,6 +358,63 @@
                 }
             }, [setConfig, setData, stringifyValue]);
 
+            const exportCodeToFile = async () => {
+                try {
+                    setExportStatus('Exporting...');
+                    
+                    // Get current data from the table
+                    const data = hot.current?.hotInstance.getData();
+                    if (!data) return;
+
+                    // Build the content structure like in saveFileContent
+                    const fields = [];
+                    const fieldNames = [];
+
+                    for (let i = 0; i < data[0].length; i++) {
+                        const fieldName = data[0][i];
+                        if (fieldName && fieldName.trim()) {
+                            fieldNames.push(fieldName.trim());
+                            const field = { name: fieldName.trim() };
+                            const imports = data[1] && data[1][i];
+                            const code = data[2] && data[2][i];
+                            if (imports && imports.trim()) {
+                                field.imports = imports.trim();
+                            }
+                            if (code && code.trim()) {
+                                field.code = code.trim();
+                            }
+                            fields.push(field);
+                        }
+                    }
+
+                    const content = { fields };
+
+                    const response = await fetch('/api/export_code', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            content,
+                            config
+                        }),
+                    });
+
+                    const result = await response.json();
+                    if (result.success) {
+                        setExportStatus(`Exported to ${result.export_path}`);
+                        setTimeout(() => setExportStatus(''), 3000);
+                    } else {
+                        setExportStatus('Export failed');
+                        setTimeout(() => setExportStatus(''), 3000);
+                    }
+                } catch (error) {
+                    console.error('Error exporting code:', error);
+                    setExportStatus('Export failed');
+                    setTimeout(() => setExportStatus(''), 3000);
+                }
+            };
+
             const saveFileContent = async () => {
                 try {
                     const data = hot.current?.hotInstance.getData();
@@ -396,6 +486,12 @@
                     if (response.ok) {
                         setSaveStatus('Save Success');
                         setDirty(false);
+
+                        // Auto-export if configured
+                        if (config.export?.file_path) {
+                            await exportCodeToFile();
+                        }
+
                         setTimeout(() => setSaveStatus(''), 1500);
                     } else {
                         setSaveStatus('Save failed');
@@ -652,6 +748,7 @@
                                 Save{dirty ? ' *' : ''}
                             </button>
                             {saveStatus && <span style={{ color: saveStatus.includes('failed') ? 'red' : 'green' }}>{saveStatus}</span>}
+                            {exportStatus && <span style={{ color: exportStatus.includes('failed') ? 'red' : 'blue' }}>{exportStatus}</span>}
                         </div>
                     </div>
 
