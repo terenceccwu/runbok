@@ -93,6 +93,7 @@
         const getCodeDependencies = (code) => {
             const sourceFile = ts.createSourceFile('example.ts', code, ts.ScriptTarget.Latest, true);
             const declared = new Set();
+            const functionParams = new Set();
             const topLevelReferences = new Set();
 
             const globalIdentifiers = new Set([
@@ -102,18 +103,32 @@
             ]);
 
             function collectIdentifiers(node, collector) {
-            if (ts.isIdentifier(node)) {
-                // Skip identifiers that are part of a property access (e.g., `log` in `console.log`)
-                if (
-                node.parent &&
-                ts.isPropertyAccessExpression(node.parent) &&
-                node.parent.name === node
-                ) {
-                return;
+                if (ts.isIdentifier(node)) {
+                    // Skip nested fields like `log` in `console.log`
+                    if (
+                        node.parent &&
+                        ts.isPropertyAccessExpression(node.parent) &&
+                        node.parent.name === node
+                    ) {
+                        return;
+                    }
+                    collector.add(node.text);
                 }
-                collector.add(node.text);
+                ts.forEachChild(node, child => collectIdentifiers(child, collector));
             }
-            ts.forEachChild(node, child => collectIdentifiers(child, collector));
+
+            function collectParamIdentifiers(paramNode) {
+                const paramNames = new Set();
+
+                function visitParam(node) {
+                    if (ts.isIdentifier(node)) {
+                        paramNames.add(node.text);
+                    }
+                    ts.forEachChild(node, visitParam);
+                }
+
+                visitParam(paramNode);
+                return paramNames;
             }
 
             function visit(node) {
@@ -124,15 +139,46 @@
                         }
 
                         if (decl.initializer) {
+                            // Collect function parameters if it's an arrow function
+                            if (ts.isArrowFunction(decl.initializer)) {
+                                decl.initializer.parameters.forEach(param => {
+                                    collectParamIdentifiers(param).forEach(p => functionParams.add(p));
+                                });
+                            }
+
                             const refs = new Set();
                             collectIdentifiers(decl.initializer, refs);
                             refs.forEach(ref => {
-                                if (!declared.has(ref) && !globalIdentifiers.has(ref)) {
+                                if (
+                                    !declared.has(ref) &&
+                                    !globalIdentifiers.has(ref) &&
+                                    !functionParams.has(ref)
+                                ) {
                                     topLevelReferences.add(ref);
                                 }
                             });
                         }
                     });
+                } else if (ts.isFunctionDeclaration(node)) {
+                    if (node.parameters) {
+                        node.parameters.forEach(param => {
+                            collectParamIdentifiers(param).forEach(p => functionParams.add(p));
+                        });
+                    }
+
+                    if (node.body) {
+                        const refs = new Set();
+                        collectIdentifiers(node.body, refs);
+                        refs.forEach(ref => {
+                            if (
+                                !declared.has(ref) &&
+                                !globalIdentifiers.has(ref) &&
+                                !functionParams.has(ref)
+                            ) {
+                                topLevelReferences.add(ref);
+                            }
+                        });
+                    }
                 }
             }
 
@@ -624,12 +670,13 @@
                     if (!field_name) {
                         return acc;
                     }
+                    const field_names = data[0]
                     const imports = data[1][index];
                     const mocks = data[2][index];
                     const code = data[3][index];
 
-                    const mockDependencies = mocks ? getCodeDependencies(mocks) : [];
-                    const dependencies = code ? [].concat(getFunctionDependencies(code)).concat(mockDependencies) : [];
+                    const mockDependencies = (mocks ? getCodeDependencies(mocks) : []).filter(field => field_names.includes(field));
+                    const dependencies = (code ? [].concat(getFunctionDependencies(code)).concat(mockDependencies) : []).filter(field => field_names.includes(field));
                     acc[field_name] = {
                         field_index: index,
                         field_name,
