@@ -126,14 +126,16 @@ app.post('/api/file_content', (req, res) => {
 // POST /api/execute_code - Execute code safely (local execution)
 app.post('/api/execute_code', async (req, res) => {
     try {
-        let { imports = "", code = "", context = {}, endpoint, preprocessor } = req.body;
+        let { imports = "", mocks = "", mockDependencies = [], code = "", context = {}, endpoint, preprocessor } = req.body;
 
         if (!code) {
             return res.status(400).json({ error: 'Code is required' });
         }
 
         const codeTemplate = `
+            let { ${mockDependencies.join(',')} } = ${context ? JSON.stringify(context) : '{}'};
             ${imports}
+            ${mocks}
             const func = ${code};
             return await func(${context ? JSON.stringify(context) : '{}'});
         `;

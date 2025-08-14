@@ -10,6 +10,7 @@
     <script src="https://unpkg.com/handsontable/dist/handsontable.full.min.js"></script>
     <script src="https://unpkg.com/@handsontable/react-wrapper@16.0.1/dist/react-handsontable.min.js"></script>
     <script src="https://unpkg.com/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
+    <script src="https://unpkg.com/typescript@5.9.2/lib/typescript.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/handsontable/dist/handsontable.full.min.css">
     <style>
         .modal-overlay {
@@ -88,6 +89,57 @@
             }
             return [];
         };
+
+        const getCodeDependencies = (code) => {
+            const sourceFile = ts.createSourceFile('example.ts', code, ts.ScriptTarget.Latest, true);
+            const declared = new Set();
+            const topLevelReferences = new Set();
+
+            const globalIdentifiers = new Set([
+                "console", "window", "document", "Math", "JSON", "Array", "Object",
+                "String", "Number", "Boolean", "Symbol", "Set", "Map", "Intl",
+                "Date", "RegExp", "Promise", "Error", "Function", "BigInt"
+            ]);
+
+            function collectIdentifiers(node, collector) {
+            if (ts.isIdentifier(node)) {
+                // Skip identifiers that are part of a property access (e.g., `log` in `console.log`)
+                if (
+                node.parent &&
+                ts.isPropertyAccessExpression(node.parent) &&
+                node.parent.name === node
+                ) {
+                return;
+                }
+                collector.add(node.text);
+            }
+            ts.forEachChild(node, child => collectIdentifiers(child, collector));
+            }
+
+            function visit(node) {
+                if (ts.isVariableStatement(node)) {
+                    node.declarationList.declarations.forEach(decl => {
+                        if (ts.isIdentifier(decl.name)) {
+                            declared.add(decl.name.text);
+                        }
+
+                        if (decl.initializer) {
+                            const refs = new Set();
+                            collectIdentifiers(decl.initializer, refs);
+                            refs.forEach(ref => {
+                                if (!declared.has(ref) && !globalIdentifiers.has(ref)) {
+                                    topLevelReferences.add(ref);
+                                }
+                            });
+                        }
+                    });
+                }
+            }
+
+            ts.forEachChild(sourceFile, visit);
+
+            return Array.from(topLevelReferences);
+        }
 
         function ConfigModal({ isOpen, onClose, config, onSave }) {
             const [endpoint, setEndpoint] = useState('');
@@ -269,7 +321,7 @@
         };
 
         function App() {
-            const NO_OF_HEADER_ROWS = 3;
+            const NO_OF_HEADER_ROWS = 4;
             const hot = useRef(null);
             const [isLoading, setIsLoading] = useState(true);
             const [saveStatus, setSaveStatus] = useState('');
@@ -327,9 +379,10 @@
                     if (data.content.fields && data.content.fields.length > 0) {
                         const fieldNames = data.content.fields.map(field => field.name);
                         const imports = data.content.fields.map(field => field.imports || "");
+                        const mocks = data.content.fields.map(field => field.mocks || "");
                         const codes = data.content.fields.map(field => field.code || "");
 
-                        const rows = [fieldNames, imports, codes];
+                        const rows = [fieldNames, imports, mocks, codes];
 
                         if (data.content.values && Array.isArray(data.content.values)) {
                             data.content.values.forEach(valueObj => {
@@ -376,9 +429,13 @@
                             fieldNames.push(fieldName.trim());
                             const field = { name: fieldName.trim() };
                             const imports = data[1] && data[1][i];
-                            const code = data[2] && data[2][i];
+                            const mocks = data[2] && data[2][i];
+                            const code = data[3] && data[3][i];
                             if (imports && imports.trim()) {
                                 field.imports = imports.trim();
+                            }
+                            if (mocks && mocks.trim()) {
+                                field.mocks = mocks.trim();
                             }
                             if (code && code.trim()) {
                                 field.code = code.trim();
@@ -429,9 +486,13 @@
                             fieldNames.push(fieldName.trim());
                             const field = { name: fieldName.trim() };
                             const imports = data[1] && data[1][i];
-                            const code = data[2] && data[2][i];
+                            const mocks = data[2] && data[2][i];
+                            const code = data[3] && data[3][i];
                             if (imports && imports.trim()) {
                                 field.imports = imports.trim();
+                            }
+                            if (mocks && mocks.trim()) {
+                                field.mocks = mocks.trim();
                             }
                             if (code && code.trim()) {
                                 field.code = code.trim();
@@ -502,7 +563,7 @@
                 }
             };
 
-            const executeCode = async (code, context, imports) => {
+            const executeCode = async (code, context, imports, mocks, mockDependencies) => {
                 try {
                     const response = await fetch('/api/execute_code', {
                         method: 'POST',
@@ -513,6 +574,8 @@
                             code,
                             context,
                             imports,
+                            mocks,
+                            mockDependencies,
                             endpoint: config?.code_executor?.endpoint,
                             preprocessor: config?.code_executor?.preprocessor
                         }),
@@ -562,15 +625,19 @@
                         return acc;
                     }
                     const imports = data[1][index];
-                    const code = data[2][index];
+                    const mocks = data[2][index];
+                    const code = data[3][index];
 
-                    const dependencies = code ? getFunctionDependencies(code) : [];
+                    const mockDependencies = mocks ? getCodeDependencies(mocks) : [];
+                    const dependencies = code ? [].concat(getFunctionDependencies(code)).concat(mockDependencies) : [];
                     acc[field_name] = {
                         field_index: index,
                         field_name,
                         affects: [],
                         dependencies,
                         imports,
+                        mocks,
+                        mockDependencies,
                         code,
                     };
                     dependencies.forEach((dep) => {
@@ -621,7 +688,7 @@
                                     ...prev,
                                     [`${value_row_index + NO_OF_HEADER_ROWS},${affected_field.field_index}`]: Date.now()
                                 }));
-                                const newValue = await executeCode(affected_field.code, rowObject, affected_field.imports);
+                                const newValue = await executeCode(affected_field.code, rowObject, affected_field.imports, affected_field.mocks, affeted_fields.mockDependencies);
                                 hot.current?.hotInstance.setDataAtCell(
                                     value_row_index + NO_OF_HEADER_ROWS,
                                     affected_field.field_index,
@@ -687,7 +754,7 @@
                                 ...prev,
                                 [`${i},${field.field_index}`]: Date.now()
                             }));
-                            const newValue = await executeCode(field.code, rowObject, field.imports);
+                            const newValue = await executeCode(field.code, rowObject, field.imports, field.mocks, field.mockDependencies);
                             hot.current?.hotInstance.setDataAtCell(
                                 i,
                                 field.field_index,
@@ -762,7 +829,7 @@
                         ref={hot}
                         data={data}
                         rowHeaders={(index) =>
-                            index === 0 ? "Field" : index === 1 ? "Imports<br/>&<br/>Types" : index === 2 ? "Code" : index - 2
+                            index === 0 ? "Field" : index === 1 ? "Imports<br/>&<br/>Types" : index === 2 ? "Mocks" : index === 3 ? "Code" : index - 2
                         }
                         rowHeaderWidth={60}
                         colHeaders={true}
