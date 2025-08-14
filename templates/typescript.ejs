@@ -25,7 +25,7 @@ type Output = Input & {
 const <%- func.name %> = <%- func.code %>;
 
 <% }); -%>
-const main = async (input: Input): Promise<Output> => {
+const run = async (input: Input): Promise<Output> => {
   const ctx = Object.assign({}, input) as Output;
 <% computedFields.forEach(field => { -%>
   ctx["<%- field.name %>"] = await compute_<%- field.name %>(ctx);<% if (field.dependencies && field.dependencies.length > 0) { %> // depends on: <%- field.dependencies.join(', ') %><% } %>
@@ -33,4 +33,4 @@ const main = async (input: Input): Promise<Output> => {
   return ctx;
 };
 
-export default main;
+export default run;
