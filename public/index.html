@@ -688,7 +688,7 @@
                                     ...prev,
                                     [`${value_row_index + NO_OF_HEADER_ROWS},${affected_field.field_index}`]: Date.now()
                                 }));
-                                const newValue = await executeCode(affected_field.code, rowObject, affected_field.imports, affected_field.mocks, affeted_fields.mockDependencies);
+                                const newValue = await executeCode(affected_field.code, rowObject, affected_field.imports, affected_field.mocks, affected_field.mockDependencies);
                                 hot.current?.hotInstance.setDataAtCell(
                                     value_row_index + NO_OF_HEADER_ROWS,
                                     affected_field.field_index,
