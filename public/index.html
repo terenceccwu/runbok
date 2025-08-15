@@ -366,6 +366,57 @@
             );
         };
 
+        function TabBar({ files, activeFile, onTabChange, onTabClose }) {
+            if (!files || files.length <= 1) return null;
+
+            return (
+                <div style={{
+                    borderBottom: '1px solid #ddd',
+                    backgroundColor: '#f8f9fa',
+                    display: 'flex',
+                    overflowX: 'auto'
+                }}>
+                    {files.map(file => (
+                        <div
+                            key={file.name}
+                            style={{
+                                padding: '10px 20px',
+                                cursor: 'pointer',
+                                backgroundColor: activeFile === file.name ? '#fff' : 'transparent',
+                                borderTop: activeFile === file.name ? '2px solid #007bff' : '2px solid transparent',
+                                borderRight: '1px solid #ddd',
+                                display: 'flex',
+                                alignItems: 'center',
+                                minWidth: '120px',
+                                position: 'relative'
+                            }}
+                            onClick={() => onTabChange(file.name)}
+                        >
+                            <span style={{ marginRight: '8px' }}>{file.name}</span>
+                            {files.length > 1 && (
+                                <button
+                                    style={{
+                                        background: 'none',
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        padding: '2px',
+                                        fontSize: '12px',
+                                        color: '#666'
+                                    }}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onTabClose(file.name);
+                                    }}
+                                >
+                                    ×
+                                </button>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            );
+        }
+
         function App() {
             const NO_OF_HEADER_ROWS = 4;
             const hot = useRef(null);
@@ -373,20 +424,20 @@
             const [saveStatus, setSaveStatus] = useState('');
             const [exportStatus, setExportStatus] = useState('');
             const [config, setConfig] = useState({
-                code_executor: { 
+                code_executor: {
                     endpoint: '',
                     preprocessor: ''
                 }
             });
             const [showConfigModal, setShowConfigModal] = useState(false);
-            const [filePath, setFilePath] = useState('');
-            const [fileContent, setFileContent] = useState(null);
+            const [files, setFiles] = useState([]);
+            const [activeFile, setActiveFile] = useState('');
+            const [workingDir, setWorkingDir] = useState('');
 
             const [data, setData] = useState([]);
-            // Change cellStartExecutionTimestamp from boolean to timestamp (number | null)
             const [cellStartExecutionTimestamp, setCellStartExecutionTimestamp] = useState({});
-            const [cellExecutionTimestamps, setCellExecutionTimestamps] = useState({}); // track last execution timestamps
-            const [dirty, setDirty] = useState(false); // track unsaved changes
+            const [cellExecutionTimestamps, setCellExecutionTimestamps] = useState({});
+            const [dirty, setDirty] = useState(false);
 
             const stringifyValue = useCallback((value, forceFormat = null) => {
                 const format = forceFormat || config.value_format || 'json';
@@ -394,7 +445,7 @@
                     return jsyaml.dump(value).trim();
                 }
                 return JSON.stringify(value, null, "  ");
-            }, [config]);
+            }, [config.value_format]); // Only depend on value_format, not entire config
 
             const parseValue = useCallback((value, forceFormat = null) => {
                 const format = forceFormat || config.value_format || 'json';
@@ -404,19 +455,38 @@
                 try {
                     return JSON.parse(value);
                 } catch {
-                    return value; // Return as is if parsing fails
+                    return value;
                 }
-            }, [config]);
+            }, [config.value_format]); // Only depend on value_format, not entire config
 
-            const loadFileContent = useCallback(async () => {
+            // Load list of YAML files - no dependencies to avoid re-renders
+            const loadYamlFiles = useCallback(async () => {
+                try {
+                    const response = await fetch('/api/yaml_files');
+                    const data = await response.json();
+                    setFiles(data.files);
+                    setWorkingDir(data.working_dir);
+
+                    // Set first file as active if none selected
+                    if (!activeFile && data.files.length > 0) {
+                        setActiveFile(data.files[0].name);
+                    }
+                } catch (error) {
+                    console.error('Error loading YAML files:', error);
+                }
+            }, []); // No dependencies
+
+            // Load specific file content - only depend on stringifyValue
+            const loadFileContent = useCallback(async (filename) => {
+                if (!filename) return;
+
                 setIsLoading(true);
                 try {
-                    const response = await fetch('/api/file_content');
+                    const response = await fetch(`/api/file_content/${encodeURIComponent(filename)}`);
                     const data = await response.json();
 
-                    setFilePath(data.file_path);
-                    setConfig(data.content.config || { 
-                        code_executor: { 
+                    setConfig(data.content.config || {
+                        code_executor: {
                             endpoint: '',
                             preprocessor: ''
                         }
@@ -435,7 +505,7 @@
                                 const row = fieldNames.map(fieldName => {
                                     const value = valueObj[fieldName];
                                     if (value !== undefined && value !== null) {
-                                        return typeof value === 'object' ? stringifyValue(value, data.content.config.value_format) : value;
+                                        return typeof value === 'object' ? stringifyValue(value, data.content.config?.value_format) : value;
                                     }
                                     return "";
                                 });
@@ -443,82 +513,69 @@
                             });
                         }
 
-                        while (rows.length < 5) {
+                        while (rows.length < 8) {
                             rows.push(Array(fieldNames.length).fill(""));
                         }
 
                         setData(rows);
-                        setDirty(false); // reset dirty flag after loading
+                        setDirty(false);
+                    } else {
+                        setData([]);
                     }
                 } catch (error) {
                     console.error('Error loading file:', error);
                 } finally {
                     setIsLoading(false);
                 }
-            }, [setConfig, setData, stringifyValue]);
+            }, [stringifyValue]); // Only depend on stringifyValue
 
-            const exportCodeToFile = async () => {
+            // Initial load - only run once
+            useEffect(() => {
+                loadYamlFiles();
+            }, []); // Empty dependency array
+
+            // Load file content when active file changes - prevent infinite loop
+            useEffect(() => {
+                if (activeFile) {
+                    loadFileContent(activeFile);
+                }
+            }, [activeFile]); // Only depend on activeFile, remove loadFileContent dependency
+
+            // Create a stable reference for executeCode
+            const executeCode = useCallback(async (code, context, imports, mocks, mockDependencies) => {
                 try {
-                    setExportStatus('Exporting...');
-                    
-                    // Get current data from the table
-                    const data = hot.current?.hotInstance.getData();
-                    if (!data) return;
-
-                    // Build the content structure like in saveFileContent
-                    const fields = [];
-                    const fieldNames = [];
-
-                    for (let i = 0; i < data[0].length; i++) {
-                        const fieldName = data[0][i];
-                        if (fieldName && fieldName.trim()) {
-                            fieldNames.push(fieldName.trim());
-                            const field = { name: fieldName.trim() };
-                            const imports = data[1] && data[1][i];
-                            const mocks = data[2] && data[2][i];
-                            const code = data[3] && data[3][i];
-                            if (imports && imports.trim()) {
-                                field.imports = imports.trim();
-                            }
-                            if (mocks && mocks.trim()) {
-                                field.mocks = mocks.trim();
-                            }
-                            if (code && code.trim()) {
-                                field.code = code.trim();
-                            }
-                            fields.push(field);
-                        }
-                    }
-
-                    const content = { fields };
-
-                    const response = await fetch('/api/export_code', {
+                    const response = await fetch('/api/execute_code', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                         },
                         body: JSON.stringify({
-                            content,
-                            config
+                            code,
+                            context,
+                            imports,
+                            mocks,
+                            mockDependencies,
+                            endpoint: config?.code_executor?.endpoint,
+                            preprocessor: config?.code_executor?.preprocessor,
+                            filename: activeFile
                         }),
                     });
 
                     const result = await response.json();
                     if (result.success) {
-                        setExportStatus(`Exported to ${result.export_path}`);
-                        setTimeout(() => setExportStatus(''), 3000);
+                        return result.result;
                     } else {
-                        setExportStatus('Export failed');
-                        setTimeout(() => setExportStatus(''), 3000);
+                        throw new Error(result.details || 'Code execution failed');
                     }
                 } catch (error) {
-                    console.error('Error exporting code:', error);
-                    setExportStatus('Export failed');
-                    setTimeout(() => setExportStatus(''), 3000);
+                    console.error('Error executing code:', error);
+                    throw error;
                 }
-            };
+            }, [config?.code_executor?.endpoint, config?.code_executor?.preprocessor, activeFile]);
 
             const saveFileContent = async () => {
+                if (!activeFile) return;
+
                 try {
                     const data = hot.current?.hotInstance.getData();
                     if (!data) return;
@@ -580,7 +637,7 @@
                         yamlData.values = values;
                     }
 
-                    const response = await fetch('/api/file_content', {
+                    const response = await fetch(`/api/file_content/${encodeURIComponent(activeFile)}`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
@@ -609,39 +666,69 @@
                 }
             };
 
-            const executeCode = async (code, context, imports, mocks, mockDependencies) => {
+            const exportCodeToFile = async () => {
+                if (!activeFile) return;
+
                 try {
-                    const response = await fetch('/api/execute_code', {
+                    setExportStatus('Exporting...');
+
+                    const data = hot.current?.hotInstance.getData();
+                    if (!data) return;
+
+                    const fields = [];
+                    const fieldNames = [];
+
+                    for (let i = 0; i < data[0].length; i++) {
+                        const fieldName = data[0][i];
+                        if (fieldName && fieldName.trim()) {
+                            fieldNames.push(fieldName.trim());
+                            const field = { name: fieldName.trim() };
+                            const imports = data[1] && data[1][i];
+                            const mocks = data[2] && data[2][i];
+                            const code = data[3] && data[3][i];
+                            if (imports && imports.trim()) {
+                                field.imports = imports.trim();
+                            }
+                            if (mocks && mocks.trim()) {
+                                field.mocks = mocks.trim();
+                            }
+                            if (code && code.trim()) {
+                                field.code = code.trim();
+                            }
+                            fields.push(field);
+                        }
+                    }
+
+                    const content = { fields };
+
+                    const response = await fetch(`/api/export_code/${encodeURIComponent(activeFile)}`, {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                         },
                         body: JSON.stringify({
-                            code,
-                            context,
-                            imports,
-                            mocks,
-                            mockDependencies,
-                            endpoint: config?.code_executor?.endpoint,
-                            preprocessor: config?.code_executor?.preprocessor
+                            content,
+                            config
                         }),
                     });
 
                     const result = await response.json();
                     if (result.success) {
-                        return result.result;
+                        setExportStatus(`Exported to ${result.export_path}`);
+                        setTimeout(() => setExportStatus(''), 3000);
                     } else {
-                        throw new Error(result.details || 'Code execution failed');
+                        setExportStatus('Export failed');
+                        setTimeout(() => setExportStatus(''), 3000);
                     }
                 } catch (error) {
-                    console.error('Error executing code:', error);
-                    throw error;
+                    console.error('Error exporting code:', error);
+                    setExportStatus('Export failed');
+                    setTimeout(() => setExportStatus(''), 3000);
                 }
             };
 
             const onConfigSave = useCallback((newConfig, oldConfig) => {
                 if (newConfig.value_format && newConfig.value_format !== oldConfig.value_format) {
-                    // Update the value format in the Handsontable instance
                     const data = hot.current?.hotInstance.getData();
                     for (let i = NO_OF_HEADER_ROWS; i < data.length; i++) {
                         for (let j = 0; j < data[i].length; j++) {
@@ -660,7 +747,6 @@
 
                 setConfig(newConfig);
                 setDirty(true);
-
             }, [stringifyValue, parseValue]);
 
             const onchange = useCallback(async function (rowIndex, colIndex, oldValue, newValue) {
@@ -835,19 +921,31 @@
                 if (rowIndex == 1 || rowIndex == 2 || rowIndex == 3) {
                     await onFuncChange(data[0][colIndex]);
                 }
+            }, [parseValue, stringifyValue, executeCode]); // Only essential dependencies
 
-                // // Auto-save after changes
-                // await saveFileContent();
-            }, [hot, config, parseValue, stringifyValue, executeCode]);
+            const handleTabChange = (filename) => {
+                if (dirty) {
+                    const confirmChange = window.confirm('You have unsaved changes. Are you sure you want to switch tabs?');
+                    if (!confirmChange) return;
+                }
+                setActiveFile(filename);
+            };
 
-            // if (isLoading) {
-            //     return <div style={{ padding: '20px' }}>Loading...</div>;
-            // }
+            const handleTabClose = (filename) => {
+                console.log('Tab close requested for:', filename);
+            };
 
             return (
                 <div>
+                    <TabBar
+                        files={files}
+                        activeFile={activeFile}
+                        onTabChange={handleTabChange}
+                        onTabClose={handleTabClose}
+                    />
+
                     <div style={{ padding: '10px', marginBottom: '10px', background: '#f5f5f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h2 style={{ margin: 0 }}>runbok: {filePath}</h2>
+                        <h2 style={{ margin: 0 }}>runbok: {activeFile}</h2>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                             <button
                                 onClick={() => setShowConfigModal(true)}
@@ -888,12 +986,9 @@
                         autoWrapRow={true}
                         autoWrapCol={true}
                         licenseKey="non-commercial-and-evaluation"
-                        afterInit={() => {
-                            loadFileContent()
-                        }}
                         afterChange={(changes, source) => {
                             if (changes && source !== 'loadData') {
-                                setDirty(true); // mark as dirty on any change
+                                setDirty(true);
                                 changes?.forEach(([row, col, oldValue, newValue]) => {
                                     onchange(row, col, oldValue, newValue);
                                 });

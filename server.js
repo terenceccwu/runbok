@@ -12,16 +12,15 @@ const exportCode = require('./utils/export-code');
 const app = express();
 const PORT = 3001;
 
-// Get the file path from environment variable
-const filePathAbs = process.env.FILE_PATH_ABSOLUTE;
-const filePath = process.env.FILE_PATH;
+// Get the working directory from environment variable
+const workingDir = process.env.WORKING_DIR;
 
-if (!filePathAbs) {
-    console.error('File path not provided');
+if (!workingDir) {
+    console.error('Working directory not provided');
     process.exit(1);
 }
 
-console.log(`runbok CLI started with file: ${filePathAbs}`);
+console.log(`runbok CLI started with working directory: ${workingDir}`);
 
 // Middleware
 app.use(express.json());
@@ -29,11 +28,44 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const nodeInspectorConnectionPool = new NodeInspectorConnectionPool();
 
+// Helper function to get YAML files in working directory
+const getYamlFiles = () => {
+    return fs.readdirSync(workingDir)
+        .filter(file => file.endsWith('.yaml'))
+        .sort()
+        .map(file => ({
+            name: file,
+            path: path.join(workingDir, file)
+        }));
+};
+
 // API Routes
 
-// GET /api/file_content - Read file content
-app.get('/api/file_content', (req, res) => {
+// GET /api/yaml_files - Get list of YAML files
+app.get('/api/yaml_files', (req, res) => {
     try {
+        const yamlFiles = getYamlFiles();
+        res.json({
+            working_dir: workingDir,
+            files: yamlFiles.map(f => ({ name: f.name, path: path.relative(workingDir, f.path) }))
+        });
+    } catch (error) {
+        console.error('Error getting YAML files:', error);
+        res.status(500).json({ error: 'Failed to get YAML files', details: error.message });
+    }
+});
+
+// GET /api/file_content/:filename - Read specific file content
+app.get('/api/file_content/:filename', (req, res) => {
+    try {
+        const filename = req.params.filename;
+        const filePathAbs = path.join(workingDir, filename);
+
+        // Security check - ensure file is within working directory
+        if (!filePathAbs.startsWith(workingDir)) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+
         if (!fs.existsSync(filePathAbs)) {
             // If file doesn't exist, return empty structure
             const emptyContent = {
@@ -50,7 +82,10 @@ app.get('/api/file_content', (req, res) => {
                 fields: [],
                 values: []
             };
-            return res.json(emptyContent);
+            return res.json({
+                file_path: filename,
+                content: emptyContent
+            });
         }
 
         const fileContent = fs.readFileSync(filePathAbs, 'utf8');
@@ -70,7 +105,10 @@ app.get('/api/file_content', (req, res) => {
             };
         }
 
-        // Ensure preprocessor field exists
+        // Ensure all config fields exist
+        if (!parsedContent.config.code_executor) {
+            parsedContent.config.code_executor = { endpoint: "", preprocessor: "" };
+        }
         if (!parsedContent.config.code_executor.preprocessor) {
             parsedContent.config.code_executor.preprocessor = "";
         }
@@ -84,7 +122,7 @@ app.get('/api/file_content', (req, res) => {
         }
 
         res.json({
-            file_path: filePath,
+            file_path: filename,
             content: parsedContent,
         });
     } catch (error) {
@@ -93,10 +131,17 @@ app.get('/api/file_content', (req, res) => {
     }
 });
 
-// POST /api/file_content - Write file content
-app.post('/api/file_content', (req, res) => {
+// POST /api/file_content/:filename - Write specific file content
+app.post('/api/file_content/:filename', (req, res) => {
     try {
+        const filename = req.params.filename;
+        const filePathAbs = path.join(workingDir, filename);
         const content = req.body.content;
+
+        // Security check - ensure file is within working directory
+        if (!filePathAbs.startsWith(workingDir)) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
 
         // Ensure config exists in the content being saved
         if (!content.config) {
@@ -126,11 +171,13 @@ app.post('/api/file_content', (req, res) => {
 // POST /api/execute_code - Execute code safely (local execution)
 app.post('/api/execute_code', async (req, res) => {
     try {
-        let { imports = "", mocks = "", mockDependencies = [], code = "", context = {}, endpoint, preprocessor } = req.body;
+        let { imports = "", mocks = "", mockDependencies = [], code = "", context = {}, endpoint, preprocessor, filename } = req.body;
 
         if (!code) {
             return res.status(400).json({ error: 'Code is required' });
         }
+
+        const filePathAbs = filename ? path.join(workingDir, filename) : workingDir;
 
         const codeTemplate = `
             let { ${mockDependencies.join(',')} } = ${context ? JSON.stringify(context) : '{}'};
@@ -156,7 +203,6 @@ app.post('/api/execute_code', async (req, res) => {
                 });
             }
         }
-
 
         const wrappedCode = `
             (async function() {
@@ -190,21 +236,23 @@ app.post('/api/execute_code', async (req, res) => {
     }
 });
 
-app.post('/api/export_code', async (req, res) => {
+// POST /api/export_code/:filename - Export code for specific file
+app.post('/api/export_code/:filename', async (req, res) => {
     try {
+        const filename = req.params.filename;
         const { content, config } = req.body;
-        
+
         if (!content || !content.fields) {
             return res.status(400).json({ error: 'Invalid content provided' });
         }
-        
-        const workingDir = path.dirname(filePathAbs);
-        const exportPath = exportCode(content, config, workingDir);
-        
-        res.json({ 
-            success: true, 
+
+        const fileDir = path.dirname(path.join(workingDir, filename));
+        const exportPath = exportCode(content, config, fileDir);
+
+        res.json({
+            success: true,
             message: 'Code exported successfully',
-            export_path: path.relative(workingDir, exportPath)
+            export_path: path.relative(fileDir, exportPath)
         });
     } catch (error) {
         console.error('Error exporting code:', error);
@@ -223,7 +271,7 @@ app.get('/', (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Server running on <http://localhost>:${PORT}`);
 
     // Open browser after a short delay
     setTimeout(() => {
